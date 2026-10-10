@@ -1,5 +1,5 @@
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from "react";
-import { ChevronDown, Crown, Flag, Hash, Loader2, LogOut, Pencil, Plus, Reply, Send, Shield, Trash2, Users, VolumeX, X } from "lucide-react";
+import { ChevronDown, Crown, Flag, Hash, Loader2, LogOut, Pencil, Plus, Reply, Send, Shield, Smile, Trash2, Users, VolumeX, X } from "lucide-react";
 
 type Channel = {
   id: string;
@@ -12,7 +12,8 @@ type Channel = {
   locked?: boolean;
   editable?: boolean;
 };
-type Person = { id: string; username: string; avatar: string; color?: string; rank?: string; owner?: boolean };
+type SiteFace = { name: string; username: string; avatar: string; bio: string; color: string };
+type Person = { id: string; username: string; avatar: string; color?: string; rank?: string; owner?: boolean; site?: SiteFace | null };
 type Powers = { messages: boolean; timeout: boolean; ban: boolean; roles: boolean; channels: boolean };
 type RoleChip = { id?: string; name: string; color: string };
 type Card = {
@@ -27,6 +28,7 @@ type Card = {
   timeoutUntil: number;
   banned: boolean;
   roles: RoleChip[];
+  site?: SiteFace | null;
 };
 type ReplyRef = { id: string; content: string; author: string };
 type Note = {
@@ -44,7 +46,7 @@ type Note = {
 };
 type Rule = { title: string; description: string; locked?: boolean };
 type Announcement = { id: string; title: string; content: string; important?: number | boolean };
-type Seat = { id: string; username: string; avatar: string; color: string; status: string };
+type Seat = { id: string; username: string; avatar: string; color: string; status: string; site?: SiteFace | null };
 type Group = { role: { name: string; color: string } | null; members: Seat[] };
 type Cmd = { name: string; usage: string; description: string; moderation: boolean };
 type AuditRow = { id: string; action: string; category: string; message: string; at: number; by: string };
@@ -105,7 +107,8 @@ const roomCss = `
 .pz-online-count{font-size:.82em;font-weight:600}
 .pz-account-btn{display:inline-flex;align-items:center;gap:8px;max-width:45%;padding:3px 6px 3px 3px;border:1px solid var(--vx-border);border-radius:999px;background:var(--vx-surface-2);color:var(--vx-text)}
 .pz-account-btn:hover{border-color:color-mix(in srgb,var(--vx-accent) 55%,var(--vx-border))}
-.pz-account-btn img{width:28px;height:28px;border-radius:50%;object-fit:cover}
+.pz-account-btn .pz-face > img,.pz-account-btn .pz-face > span{width:28px;height:28px;border-radius:50%;object-fit:cover}
+.pz-account-btn .pz-face-mark{width:12px;height:12px}
 .pz-account-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9em}
 .pz-body{display:flex;flex:1;min-height:0;position:relative}
 .pz-channels{width:180px;flex-shrink:0;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:2px;background:hsla(220,48%,4%,.58);border-right:1px solid var(--vx-border)}
@@ -121,7 +124,8 @@ const roomCss = `
 .pz-messages{flex:1;overflow-y:auto;padding:12px 14px 4px;display:flex;flex-direction:column}
 .pz-older{align-self:center;margin:4px 0 8px;font-size:.8em;color:var(--vx-muted);background:none;border:none}
 .pz-empty{margin:auto;color:var(--vx-muted)}
-.pz-msg{position:relative;display:flex;gap:12px;padding:2px 8px;margin:0 -8px;border-radius:5px}
+.pz-msg{position:relative;display:flex;gap:12px;padding:2px 8px;margin:0 -8px;border-radius:5px;animation:pz-in .28s ease}
+.pz-system{animation:pz-in .28s ease}
 .pz-msg:hover{background:color-mix(in srgb,var(--vx-surface-2) 70%,transparent)}
 .pz-msg.first{margin-top:10px}
 .pz-msg.mentioned{background:color-mix(in srgb,var(--vx-accent) 12%,transparent);box-shadow:inset 2px 0 var(--vx-accent)}
@@ -139,7 +143,11 @@ const roomCss = `
 .pz-text code{background:var(--vx-surface-2);padding:1px 4px;border-radius:4px}
 .pz-text pre{background:var(--vx-surface-2);border:1px solid var(--vx-border);padding:8px;border-radius:5px;overflow-x:auto;margin:4px 0}
 .pz-mention{color:var(--vx-accent);background:color-mix(in srgb,var(--vx-accent) 15%,transparent);border-radius:4px;padding:0 2px}
-.pz-emote{height:1.6em;vertical-align:middle}
+.pz-emoji{display:inline-block;font-size:1.55em;line-height:1;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",emoji;transform:translateY(1px)}
+.pz-emote{height:1.9em;vertical-align:middle;border-radius:4px}
+.pz-text.is-jumbo{line-height:1.15}
+.pz-text.is-jumbo .pz-emoji{font-size:2.8rem}
+.pz-text.is-jumbo .pz-emote{height:3.1rem}
 .pz-link{color:var(--vx-accent)}
 .pz-reply-ref{font-size:.85em;color:var(--vx-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin-bottom:2px}
 .pz-media{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
@@ -157,6 +165,27 @@ const roomCss = `
 .pz-msg-actions .danger:hover{color:var(--vx-danger)}
 .pz-edit-box{width:100%;background:var(--vx-surface-2);border:1px solid var(--vx-border);border-radius:5px;padding:6px 8px;resize:none}
 .pz-typing{height:18px;padding:0 14px;font-size:.8em;color:var(--vx-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.pz-typing i{display:inline-block;width:4px;height:4px;margin-left:3px;border-radius:50%;background:currentColor;animation:pz-dot 1s infinite}
+.pz-typing i:nth-child(2){animation-delay:.15s}
+.pz-typing i:nth-child(3){animation-delay:.3s}
+.pz-fresh{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);z-index:4;border:1px solid hsl(213 45% 42%);border-radius:999px;background:hsl(213 55% 32%);color:#fff;padding:5px 12px;font-size:.78em;font-weight:650}
+.pz-emoji-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:none;border-radius:12px;background:transparent;color:var(--vx-muted)}
+.pz-emoji-btn:hover,.pz-emoji-btn.on{color:#fff;background:hsla(213,40%,18%,.7)}
+.pz-emoji-pop{position:absolute;left:12px;right:12px;bottom:calc(100% + 4px);z-index:6;padding:8px;background:hsla(220,42%,7%,.94);border:1px solid hsl(213 40% 30%);border-radius:16px;box-shadow:0 10px 28px #0006}
+.pz-emoji-tabs{display:flex;gap:4px;margin-bottom:6px}
+.pz-emoji-tabs button{border:none;background:transparent;color:var(--vx-muted);border-radius:999px;padding:3px 8px;font-size:.75em;font-weight:700}
+.pz-emoji-tabs button.on{background:hsla(213,40%,18%,.8);color:#fff}
+.pz-emoji-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;max-height:168px;overflow-y:auto}
+.pz-emoji-grid button{border:none;background:transparent;border-radius:8px;font-size:1.45rem;line-height:1;padding:5px 0;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",emoji}
+.pz-emoji-grid button:hover{background:hsla(213,40%,18%,.75);transform:scale(1.12)}
+.pz-emoji-grid img{width:26px;height:26px;object-fit:contain}
+.pz-face{position:relative;display:inline-flex}
+.pz-face-mark{position:absolute;right:-3px;bottom:-3px;width:14px;height:14px;border-radius:4px;border:2px solid hsla(220,42%,6%,.95);object-fit:cover}
+.pz-offer{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 12px 0;padding:8px 10px;border:1px solid hsl(213 40% 30%);border-radius:14px;background:hsla(216,30%,10%,.72);color:hsl(216 18% 86%);font-size:.82em}
+.pz-offer button{border:1px solid hsl(213 45% 42%);border-radius:10px;background:hsl(213 55% 32%);color:#fff;padding:4px 10px;font-size:.92em}
+.pz-offer .pz-skip{background:transparent;color:var(--vx-muted)}
+.pz-menu-bio{margin-top:3px;color:var(--vx-muted);font-size:.78em;line-height:1.35;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.pz-site-line{margin-top:2px;color:hsl(213 72% 68%);font-size:.78em}
 .pz-composer{position:relative;padding:0 12px 10px}
 .pz-composer-row{display:flex;align-items:flex-end;gap:8px;background:hsla(216,30%,10%,.72);border:1px solid hsl(213 40% 30%);border-radius:20px;padding:6px 6px 6px 14px}
 .pz-composer-row:focus-within{border-color:hsl(213 45% 42%)}
@@ -200,18 +229,24 @@ const roomCss = `
 .pz-primary:hover{background:hsl(213 55% 36%)}
 .pz-spinner{width:28px;height:28px;border-radius:50%;border:3px solid var(--vx-border);border-top-color:var(--vx-accent);animation:pz-spin .8s linear infinite}
 @keyframes pz-spin{to{transform:rotate(360deg)}}
+@keyframes pz-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes pz-dot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
+@keyframes pz-live{0%,100%{box-shadow:0 0 0 0 rgba(43,214,110,.45)}70%{box-shadow:0 0 0 5px rgba(43,214,110,0)}}
 .pz-online{width:200px;flex-shrink:0;overflow-y:auto;padding:10px 8px;background:hsla(220,48%,4%,.58);border-left:1px solid var(--vx-border)}
 .pz-online-head{display:flex;justify-content:space-between;margin:0 6px 8px;color:var(--vx-muted);font-size:.75em;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
 .pz-online-role{margin:10px 6px 4px;color:var(--vx-muted);font-size:.72em;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
 .pz-online-user{display:flex;align-items:center;gap:8px;width:100%;padding:5px 6px;border:none;border-radius:5px;background:transparent;text-align:left;font-size:.88em}
 .pz-online-user:hover{background:var(--vx-surface-2)}
 .pz-online-avatar{position:relative;width:26px;height:26px;flex-shrink:0}
-.pz-online-avatar img,.pz-online-avatar span{width:100%;height:100%;border-radius:50%;object-fit:cover}
-.pz-online-avatar i{position:absolute;right:-2px;bottom:-2px;width:9px;height:9px;border-radius:50%;border:2px solid hsla(220,42%,6%,.95);background:#2bd66e}
+.pz-online-avatar > img,.pz-online-avatar > span:not(.pz-face){width:100%;height:100%;border-radius:50%;object-fit:cover}
+.pz-online-avatar .pz-face{width:100%;height:100%}
+.pz-online-avatar .pz-face > img,.pz-online-avatar .pz-face > span{width:100%;height:100%;border-radius:50%;object-fit:cover}
+.pz-online-avatar i{position:absolute;right:-2px;bottom:-2px;width:9px;height:9px;border-radius:50%;border:2px solid hsla(220,42%,6%,.95);background:#2bd66e;animation:pz-live 2.4s ease-out infinite}
 .pz-online-user .pz-author{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pz-menu{position:absolute;top:56px;right:10px;z-index:12;min-width:220px;background:hsla(220,42%,7%,.94);border:2px solid var(--vx-border);border-radius:5px;padding:6px;box-shadow:0 8px 24px #00000073}
 .pz-menu-user{display:flex;align-items:center;gap:10px;padding:6px 8px 10px;border-bottom:1px solid var(--vx-border);margin-bottom:4px}
-.pz-menu-user img{width:36px;height:36px;border-radius:50%;object-fit:cover}
+.pz-menu-user .pz-face > img,.pz-menu-user .pz-face > span{width:36px;height:36px;border-radius:50%;object-fit:cover}
+.pz-menu-user .pz-face-mark{width:13px;height:13px}
 .pz-menu-sub{color:var(--vx-muted);font-size:.8em}
 .pz-menu button{display:flex;align-items:center;gap:8px;width:100%;border:none;background:transparent;padding:8px;border-radius:5px;text-align:left}
 .pz-menu button:hover{background:var(--vx-surface-2)}
@@ -273,11 +308,54 @@ function tone(kind: string) {
   return "";
 }
 
+const EMOJI_SETS = [
+  ["😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😎", "🤩", "😜", "🤗", "🤔", "😴", "😭", "😤", "🤯", "🥳", "😇", "🤠", "🥺", "😏", "🫠", "😈", "👻"],
+  ["👍", "👏", "🙌", "🤝", "✌️", "🤞", "🤘", "👋", "💪", "🙏", "👀", "💀", "💯", "🔥", "✨", "⚡", "💫", "🎉", "🎊", "💖", "💗", "💙", "💜", "🖤"],
+  ["🐱", "🐶", "🐼", "🦊", "🐸", "🦄", "🐝", "🌸", "🌈", "☀️", "🌙", "⭐", "🍀", "🍓", "🍕", "🧋", "🎮", "🎧", "⚽", "🏆", "🚀", "💎", "🎯", "🎲"],
+];
+const EMOJI_LABELS = ["Faces", "Vibes", "Stuff"];
+
+function splitEmoji(text: string) {
+  const re = /\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E)?(?:\u200D\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E)?)*/gu;
+  const out: { emoji: boolean; value: string }[] = [];
+  let last = 0;
+  for (const hit of text.matchAll(re)) {
+    const at = hit.index ?? 0;
+    if (at > last) out.push({ emoji: false, value: text.slice(last, at) });
+    out.push({ emoji: true, value: hit[0] });
+    last = at + hit[0].length;
+  }
+  if (last < text.length) out.push({ emoji: false, value: text.slice(last) });
+  if (!out.length) out.push({ emoji: false, value: text });
+  return out;
+}
+
+function jumbo(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 64) return false;
+  const rest = trimmed
+    .replace(/\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E)?(?:\u200D\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E)?)*/gu, "")
+    .replace(/:[a-zA-Z0-9_]{2,32}:/g, "")
+    .replace(/\s/g, "");
+  if (rest) return false;
+  const count = [...trimmed.matchAll(/\p{Extended_Pictographic}|:[a-zA-Z0-9_]{2,32}:/gu)].length;
+  return count > 0 && count <= 3;
+}
+
 function Face({ src, name, className }: { src?: string; name?: string; className: string }) {
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [src]);
   if (src && !broken) return <img src={src} alt="" className={className} onError={() => setBroken(true)} />;
   return <span className={`${className} pz-avatar-fallback`}>{(name || "?").slice(0, 1).toUpperCase()}</span>;
+}
+
+function Portrait({ src, name, className, site }: { src?: string; name?: string; className: string; site?: SiteFace | null }) {
+  return (
+    <span className="pz-face">
+      <Face src={site?.avatar || src} name={name} className={className} />
+      {site ? <img className="pz-face-mark" src="/storage/images/vortex-petezah.webp" alt="" /> : null}
+    </span>
+  );
 }
 
 function Rich({ text, emotes, names, channels }: { text: string; emotes: Record<string, string>; names: Map<string, string>; channels: Channel[] }) {
@@ -306,7 +384,16 @@ function Rich({ text, emotes, names, channels }: { text: string; emotes: Record<
               if (part.startsWith(":") && part.endsWith(":")) {
                 const src = emotes[part.slice(1, -1)];
                 if (!src) return <span key={i}>{part}</span>;
-                return <img key={i} src={src} alt="" className="pz-emote" />;
+                return <img key={i} src={src} alt={part} className="pz-emote" />;
+              }
+              if (/\p{Extended_Pictographic}/u.test(part)) {
+                return (
+                  <span key={i}>
+                    {splitEmoji(part).map((bit, n) => bit.emoji
+                      ? <span key={n} className="pz-emoji">{bit.value}</span>
+                      : <span key={n}>{bit.value}</span>)}
+                  </span>
+                );
               }
               if (part.startsWith("<@") && part.endsWith(">")) {
                 return <span key={i} className="pz-mention">@{names.get(part.slice(2, -1)) || "member"}</span>;
@@ -346,6 +433,11 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
   const [profile, setProfile] = useState<Card | null>(null);
   const [onlineOpen, setOnlineOpen] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [emojiTab, setEmojiTab] = useState(0);
+  const [fresh, setFresh] = useState(false);
+  const [faceLater, setFaceLater] = useState(false);
+  const [face, setFace] = useState<{ signedIn: boolean; linked: boolean; face: SiteFace | null; mine: SiteFace | null } | null>(null);
   const [commands, setCommands] = useState<Cmd[]>([]);
   const [mentions, setMentions] = useState<Person[]>([]);
   const [pick, setPick] = useState(0);
@@ -364,6 +456,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
   const [channelForm, setChannelForm] = useState<ChannelDraft | null>(null);
   const [discord, setDiscord] = useState<{ id: string; name: string; usable: boolean }[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLTextAreaElement>(null);
   const stickRef = useRef(true);
   const revRef = useRef("0");
   const channelRef = useRef("");
@@ -424,6 +517,15 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
       ch.postMessage("in");
       ch.close();
     } catch {}
+    try {
+      setFaceLater(sessionStorage.getItem("pz-face-later") === "1");
+    } catch {}
+    fetch("/api/chat/face", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && typeof data.signedIn === "boolean") setFace(data);
+      })
+      .catch(() => {});
     fetch("/api/chat/commands", { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -467,6 +569,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
           revRef.current = data.rev || revRef.current;
           setHasMore(!!data.hasMore);
           setMessages(data.messages);
+          if (!stickRef.current) setFresh(true);
         }
       } catch {}
     };
@@ -582,6 +685,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
     setEditing(null);
     setMessages([]);
     setGroups([]);
+    setFresh(false);
     fetch(`/api/chat/feed?${new URLSearchParams({ channel: id })}`, { credentials: "include" })
       .then((r) => r.json())
       .then((data) => {
@@ -649,6 +753,8 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
       setReply(null);
       setEditing(null);
       setMentions([]);
+      setEmojiOpen(false);
+      setFresh(false);
       stickRef.current = true;
       if (data.command) {
         setNote(data.command.text || (data.command.ok ? "Done." : "That command did not run."));
@@ -805,6 +911,48 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
     if (ok) setModUser(null);
   };
 
+  const putEmoji = (glyph: string) => {
+    const el = boxRef.current;
+    const start = el?.selectionStart ?? draft.length;
+    const end = el?.selectionEnd ?? draft.length;
+    const next = `${draft.slice(0, start)}${glyph}${draft.slice(end)}`;
+    setDraft(next.slice(0, 2000));
+    setEmojiOpen(false);
+    requestAnimationFrame(() => {
+      const node = boxRef.current;
+      if (!node) return;
+      const at = Math.min(start + glyph.length, 2000);
+      node.focus();
+      node.setSelectionRange(at, at);
+    });
+  };
+
+  const toggleFace = async (on: boolean) => {
+    setNote("");
+    try {
+      const res = await fetch("/api/chat/face", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ on }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.code === "SITE") {
+        onNavigate("petezah://account");
+        return;
+      }
+      if (!res.ok) {
+        setNote(data.error || "Could not update that link.");
+        return;
+      }
+      setFace(data);
+      setMenuOpen(false);
+      setGen((n) => n + 1);
+    } catch {
+      setNote("Could not update that link.");
+    }
+  };
+
   const insertMention = (user: Person) => {
     setDraft((cur) => cur.replace(/(?:^|\s)@[a-zA-Z0-9_]*$/, (hit) => `${hit.startsWith(" ") || hit.startsWith("\n") ? hit[0] : ""}<@${user.id}> `));
     setMentions([]);
@@ -856,11 +1004,11 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
           <div className="pz-thread" aria-hidden="true">
             <div className="pz-line">
               <img src={mark} alt="" />
-              <span className="pz-say">Anyone here?</span>
+              <span className="pz-say">Anyone here? <span className="pz-emoji">👋</span></span>
             </div>
             <div className="pz-line out">
               <span className="pz-dot">P</span>
-              <span className="pz-say">On my way.</span>
+              <span className="pz-say">On my way. <span className="pz-emoji">✨</span></span>
             </div>
           </div>
         </div>
@@ -869,12 +1017,28 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
   } else if (boot?.viewer) {
     body = (
       <>
+        {face?.signedIn && !face.linked && !faceLater ? (
+          <div className="pz-offer">
+            <span>Use your PeteZah picture and bio in this room?</span>
+            <button type="button" onClick={() => toggleFace(true)}>Use it</button>
+            <button type="button" className="pz-skip" onClick={() => { setFaceLater(true); try { sessionStorage.setItem("pz-face-later", "1"); } catch {} }}>Not now</button>
+          </div>
+        ) : null}
+        {!face?.signedIn && face && !faceLater ? (
+          <div className="pz-offer">
+            <span>Sign in to PeteZah if you want your picture and bio here.</span>
+            <button type="button" onClick={() => onNavigate("petezah://account")}>Sign in</button>
+            <button type="button" className="pz-skip" onClick={() => { setFaceLater(true); try { sessionStorage.setItem("pz-face-later", "1"); } catch {} }}>Not now</button>
+          </div>
+        ) : null}
         <div
           className="pz-messages"
           ref={listRef}
           onScroll={(e) => {
             const el = e.currentTarget;
-            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            const stuck = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            stickRef.current = stuck;
+            if (stuck) setFresh((on) => (on ? false : on));
           }}
         >
           {hasMore ? (
@@ -891,7 +1055,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
               </div>
             </div>
           ))}
-          {!messages.length ? <div className="pz-empty">No messages yet. Say hi!</div> : null}
+          {!messages.length ? <div className="pz-empty">It&apos;s quiet in here. Say hi <span className="pz-emoji">👋</span></div> : null}
           {messages.map((msg, index) => {
             const prev = messages[index - 1];
             const first = !prev || prev.system || msg.system || prev.author?.id !== msg.author?.id || msg.at - prev.at > 7 * 60 * 1000;
@@ -913,7 +1077,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
               <article key={msg.id} className={`pz-msg${first ? " first" : ""}${mentioned ? " mentioned" : ""}`}>
                 {first ? (
                   <button type="button" className="pz-icon-btn" onClick={(e) => msg.author?.id && openProfile(msg.author.id, e.clientX, e.clientY)}>
-                    <Face src={msg.author?.avatar} name={msg.author?.username} className="pz-avatar" />
+                    <Portrait src={msg.author?.avatar} name={msg.author?.username} className="pz-avatar" site={msg.author?.site} />
                   </button>
                 ) : (
                   <span className="pz-avatar-spacer" />
@@ -929,6 +1093,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
                       {role?.name ? (
                         <span className="pz-role" style={{ ["--role" as string]: role.color || "#0091ff" } as CSSProperties}>{role.name}</span>
                       ) : null}
+                      {msg.author?.site?.name && msg.author.site.name.toLowerCase() !== (msg.author.username || "").toLowerCase() ? <span className="pz-site-line">{msg.author.site.name}</span> : null}
                       {msg.author?.rank ? <span className="pz-time">{msg.author.rank}</span> : null}
                       <span className="pz-time">{clock(msg.at)}</span>
                     </div>
@@ -942,7 +1107,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
                       if (e.key === "Escape") setEditing(null);
                     }} />
                   ) : (
-                    <div className="pz-text">
+                    <div className={`pz-text${jumbo(msg.content) ? " is-jumbo" : ""}`}>
                       <Rich text={msg.content} emotes={emotes} names={names} channels={boot.channels} />
                       {msg.edited ? <span className="pz-edited"> (edited)</span> : null}
                     </div>
@@ -969,9 +1134,41 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
             );
           })}
         </div>
-        <div className="pz-typing">{typingLine}</div>
+        <div className="pz-typing">{typingLine ? <>{typingLine.replace(/…$/, "")}<i /><i /><i /></> : null}</div>
         <form className="pz-composer" onSubmit={submit}>
+          {fresh ? (
+            <button type="button" className="pz-fresh" onClick={() => {
+              listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+              stickRef.current = true;
+              setFresh(false);
+            }}>
+              New messages
+            </button>
+          ) : null}
           {note ? <p className="pz-error">{note}</p> : null}
+          {emojiOpen ? (
+            <div className="pz-emoji-pop">
+              <div className="pz-emoji-tabs">
+                {EMOJI_LABELS.map((label, i) => (
+                  <button key={label} type="button" className={emojiTab === i ? "on" : ""} onClick={() => setEmojiTab(i)}>{label}</button>
+                ))}
+                {Object.keys(emotes).length ? (
+                  <button type="button" className={emojiTab === 3 ? "on" : ""} onClick={() => setEmojiTab(3)}>Room</button>
+                ) : null}
+              </div>
+              <div className="pz-emoji-grid">
+                {emojiTab === 3
+                  ? Object.entries(emotes).slice(0, 40).map(([name, src]) => (
+                    <button key={name} type="button" title={name} onClick={() => putEmoji(`:${name}:`)}>
+                      <img src={src} alt="" />
+                    </button>
+                  ))
+                  : (EMOJI_SETS[emojiTab] || []).map((glyph) => (
+                    <button key={glyph} type="button" onClick={() => putEmoji(glyph)}>{glyph}</button>
+                  ))}
+              </div>
+            </div>
+          ) : null}
           {shownCmds.length ? (
             <div className="pz-menu-pop">
               {shownCmds.slice(0, 8).map((cmd, i) => (
@@ -1006,6 +1203,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
           ) : (
             <div className="pz-composer-row">
               <textarea
+                ref={boxRef}
                 rows={1}
                 maxLength={2000}
                 placeholder={`Message #${channel?.name || "room"}`}
@@ -1024,9 +1222,13 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
                   if (e.key === "Escape") {
                     setReply(null);
                     setMentions([]);
+                    setEmojiOpen(false);
                   }
                 }}
               />
+              <button type="button" className={`pz-emoji-btn${emojiOpen ? " on" : ""}`} title="Emoji" onClick={() => setEmojiOpen((v) => !v)}>
+                <Smile size={18} />
+              </button>
               <button type="submit" className="pz-send" disabled={!canTalk || busy || !draft.trim()} title="Send">
                 <Send size={16} />
               </button>
@@ -1061,7 +1263,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
         ) : null}
         {boot?.viewer ? (
           <button type="button" className="pz-account-btn" onClick={() => setMenuOpen((v) => !v)}>
-            <Face src={boot.viewer.avatar} name={boot.viewer.username} className="" />
+            <Portrait src={boot.viewer.avatar} name={boot.viewer.username} className="" site={boot.viewer.site} />
             <span className="pz-account-name">{boot.viewer.username}</span>
             <ChevronDown size={14} />
           </button>
@@ -1110,7 +1312,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
                 {(group.members || []).map((member) => (
                   <button key={member.id || member.username} type="button" className="pz-online-user" onClick={(e) => member.id && openProfile(member.id, e.clientX, e.clientY)}>
                     <span className="pz-online-avatar">
-                      <Face src={member.avatar} name={member.username} className="" />
+                      <Portrait src={member.avatar} name={member.username} className="" site={member.site} />
                       <i />
                     </span>
                     <span className="pz-author" style={member.color ? { color: member.color } : undefined}>{member.username}</span>
@@ -1134,12 +1336,24 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
       {menuOpen && boot?.viewer ? (
         <div className="pz-menu">
           <div className="pz-menu-user">
-            <Face src={boot.viewer.avatar} name={boot.viewer.username} className="" />
+            <Portrait src={boot.viewer.avatar} name={boot.viewer.username} className="" site={boot.viewer.site} />
             <div>
               <div className="pz-author">{boot.viewer.username} {boot.viewer.owner ? <Crown size={12} className="pz-crown" /> : null}</div>
-              <div className="pz-menu-sub">{boot.viewer.rank || boot.guild.name}</div>
+              {face?.linked && face.face ? (
+                <>
+                  <div className="pz-site-line">PeteZah · {face.face.name}</div>
+                  {face.face.bio ? <div className="pz-menu-bio">{face.face.bio}</div> : null}
+                </>
+              ) : (
+                <div className="pz-menu-sub">{boot.viewer.rank || boot.guild.name}</div>
+              )}
             </div>
           </div>
+          {face?.signedIn ? (
+            <button type="button" onClick={() => toggleFace(!face.linked)}>{face.linked ? "Unlink PeteZah" : "Use PeteZah profile"}</button>
+          ) : (
+            <button type="button" onClick={() => { setMenuOpen(false); onNavigate("petezah://account"); }}>Link PeteZah account</button>
+          )}
           <button type="button" onClick={(e) => openProfile(boot.viewer!.id, e.clientX, e.clientY)}>Profile</button>
           {boot.rules ? <button type="button" onClick={() => { setMenuOpen(false); setRulesOpen(true); }}>Rules</button> : null}
           {boot.powers?.timeout || boot.powers?.ban || boot.powers?.roles ? <button type="button" onClick={() => { setMenuOpen(false); setAudit([]); loadAudit(); }}>Audit log</button> : null}
@@ -1154,13 +1368,15 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
           ) : (
             <>
               <div className="pz-profile-head">
-                <Face src={profile.avatar} name={profile.username} className="pz-profile-avatar" />
+                <Portrait src={profile.avatar} name={profile.username} className="pz-profile-avatar" site={profile.site} />
                 <div>
                   <div className="pz-author" style={profile.color ? { color: profile.color } : undefined}>{profile.username}</div>
                   <div className="pz-profile-sub">{profile.rank || "Member"}{profile.joinedAt ? ` · Joined ${new Date(profile.joinedAt).toLocaleDateString()}` : ""}</div>
+                  {profile.site?.name ? <div className="pz-site-line">PeteZah · {profile.site.name}</div> : null}
                 </div>
                 <button type="button" className="pz-icon-btn" onClick={() => setProfileId("")}><X size={14} /></button>
               </div>
+              {profile.site?.bio ? <p className="pz-menu-bio">{profile.site.bio}</p> : null}
               <div className="pz-badges">
                 {profile.owner ? <span className="pz-badge is-owner"><Crown size={12} /> Guild owner</span> : null}
                 {profile.staff ? <span className="pz-badge">Vortex staff</span> : null}

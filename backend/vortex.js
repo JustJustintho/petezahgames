@@ -185,9 +185,10 @@ const touchTokenStmt = db.prepare(
 const dropStmt = db.prepare('DELETE FROM vortex_links WHERE link_key = ?');
 
 export function existingLinkKey(req) {
-  if (req.session?.user?.id) return `u:${req.session.user.id}`;
+  const userId = req.session?.user?.id;
+  if (userId && loadLinkStmt.get(`u:${userId}`)) return `u:${userId}`;
   if (req.session?.vortexKey) return `g:${req.session.vortexKey}`;
-  return '';
+  return userId ? `u:${userId}` : '';
 }
 
 export function ensureLinkKey(req) {

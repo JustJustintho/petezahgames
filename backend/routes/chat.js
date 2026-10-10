@@ -2,6 +2,16 @@ import { createHash, createHmac, randomBytes } from 'crypto';
 import { Router } from 'express';
 import { activeAnnouncementsFor } from '../api/admin-presence.js';
 import {
+  attachCard,
+  attachGroups,
+  attachMessages,
+  attachViewer,
+  faceState,
+  readSiteUser,
+  sameFaceOrigin,
+  setFace,
+} from '../api/chat-face.js';
+import {
   ChatError,
   acceptRules,
   appGuild,
@@ -116,11 +126,11 @@ function mergeHere(live, channelId) {
       status: 'online',
     });
   }
-  if (!extra.length) return { count: Number(live.count) || 0, groups };
+  if (!extra.length) return { count: Number(live.count) || 0, groups: attachGroups(groups) };
   const open = groups.find((group) => !group.role);
   if (open) open.members.push(...extra);
   else groups.push({ role: null, members: extra });
-  return { count: (Number(live.count) || 0) + extra.length, groups };
+  return { count: (Number(live.count) || 0) + extra.length, groups: attachGroups(groups) };
 }
 
 function quiet(res) {
@@ -212,11 +222,11 @@ router.get('/boot', async (req, res) => {
       guild: box?.guild || view?.guild || { name: 'PeteZah', tag: '' },
       channels,
       channelId,
-      messages,
+      messages: attachMessages(messages),
       hasMore,
       rev,
       emotes,
-      viewer: view?.viewer || null,
+      viewer: attachViewer(view?.viewer || null),
       powers: view?.powers || null,
       standing: view?.standing || null,
       roles: view ? await guildRoles().catch(() => []) : [],
@@ -260,7 +270,7 @@ router.get('/feed', async (req, res) => {
       unchanged: false,
       rev: feed.rev,
       hasMore: feed.hasMore,
-      messages: feed.messages,
+      messages: attachMessages(feed.messages),
     });
   } catch (err) {
     fail(res, err);
@@ -277,7 +287,7 @@ router.get('/history', async (req, res) => {
       return res.status(400).json({ error: 'Unknown room.' });
     }
     const page = await olderMessages(channelId, before);
-    res.json(page);
+    res.json({ ...page, messages: attachMessages(page.messages) });
   } catch (err) {
     fail(res, err);
   }
@@ -300,6 +310,7 @@ router.post('/send', async (req, res) => {
     }
     if (!allowSend(row.link_key)) return res.status(429).json({ error: 'Slow mode is on. Try again in a moment.' });
     const sent = await sendAs(row, channelId, content, replyTo);
+    if (sent?.message) sent.message = attachMessages([sent.message])[0];
     res.json(sent);
   } catch (err) {
     fail(res, err);
@@ -318,7 +329,7 @@ router.post('/edit', async (req, res) => {
       return res.status(400).json({ error: 'That message could not be sent.' });
     }
     const message = await editAs(row, channelId, messageId, content);
-    res.json({ message });
+    res.json({ message: message ? attachMessages([message])[0] : null });
   } catch (err) {
     fail(res, err);
   }
@@ -449,7 +460,7 @@ router.get('/member', async (req, res) => {
     if (!row) return;
     const userId = String(req.query.id || '');
     if (!ID.test(userId)) return res.status(400).json({ error: 'Unknown member.' });
-    res.json(await memberCard(row, userId));
+    res.json(attachCard(await memberCard(row, userId)));
   } catch (err) {
     fail(res, err);
   }
@@ -660,6 +671,34 @@ router.get('/report-room', (req, res) => {
   const id = vortexClientId();
   if (!id) return res.status(404).end();
   res.redirect(`${VORTEX_ORIGIN}/oauth/report/${encodeURIComponent(id)}?from=embed`);
+});
+
+router.get('/face', (req, res) => {
+  quiet(res);
+  const row = readLink(existingLinkKey(req));
+  if (!row) return res.status(401).json({ error: 'Sign in with Vortex again.' });
+  const site = readSiteUser(req);
+  res.json(faceState(row.vortex_id, site));
+});
+
+router.post('/face', (req, res) => {
+  quiet(res);
+  if (!sameFaceOrigin(req)) return res.status(403).json({ error: 'Forbidden' });
+  const type = String(req.get('content-type') || '');
+  if (!type.toLowerCase().includes('application/json')) return res.status(400).json({ error: 'Invalid request' });
+  const row = readLink(existingLinkKey(req));
+  if (!row || !ID.test(String(row.vortex_id || ''))) {
+    return res.status(401).json({ error: 'Sign in with Vortex again.' });
+  }
+  if (typeof req.body?.on !== 'boolean') return res.status(400).json({ error: 'Invalid request' });
+  const site = readSiteUser(req);
+  if (!site) return res.status(401).json({ error: 'Sign in to PeteZah first.', code: 'SITE' });
+  const result = setFace(row.vortex_id, site.id, req.body.on);
+  if (!result.ok) {
+    const status = result.status === 429 ? 429 : result.status || 400;
+    return res.status(status).json({ error: status === 429 ? 'Slow mode is on. Try again in a moment.' : 'Could not update that link.' });
+  }
+  res.json({ ok: true, ...faceState(row.vortex_id, site) });
 });
 
 router.get('/auth', async (req, res) => {

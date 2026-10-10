@@ -411,4 +411,16 @@ try {
   console.error('ai_ip_grants migration error:', e);
 }
 
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_faces (
+      vortex_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+} catch (e) {
+  console.error('chat_faces migration error:', e);
+}
+
 export default db;
