@@ -26,6 +26,7 @@ import { applyVpnRegion } from "@/lib/vpn";
 import { themeById, applyBrowserIdentity } from "@/lib/siteThemes";
 import { AppearanceSettings, BehaviorSettings, ProxySettings, ShortcutsSettings } from "./SettingsPanels";
 import { AdReportsPanel } from "./AdReportsPanel";
+import { CustomAiPanel } from "./CustomAiPanel";
 import { createPortal } from "react-dom";
 
 interface AuthUser {
@@ -59,7 +60,7 @@ const SITE_PRESETS = [
   { id: "petezah",   label: "PeteZah",           favicon: "/logo.png" },
 ];
 
-type Section = "profile" | "proxy" | "get-links" | "achievements" | "appearance" | "cloaking" | "behavior" | "shortcuts" | "data" | "mentions" | "admin" | "users" | "live" | "firefox-vm" | "game-stats" | "link-stats" | "ad-reports" | "monitoring" | "updates" | "ai-prompts";
+type Section = "profile" | "proxy" | "get-links" | "achievements" | "appearance" | "cloaking" | "behavior" | "shortcuts" | "data" | "mentions" | "admin" | "users" | "live" | "firefox-vm" | "game-stats" | "link-stats" | "ad-reports" | "custom-ai" | "monitoring" | "updates" | "ai-prompts";
 
 function applySettingsNow(s: Record<string, string>) {
   if (s.theme) {
@@ -371,6 +372,7 @@ const NAV: { id: Section; label: string; icon: any; adminOnly?: boolean }[] = [
   { id: "link-stats", label: "Link Stats",  icon: BarChart3, adminOnly: true },
   { id: "ai-prompts", label: "AI Prompts", icon: MessageSquare, adminOnly: true },
   { id: "ad-reports", label: "Ad reports", icon: TrendingUp, adminOnly: true },
+  { id: "custom-ai", label: "Custom AI", icon: KeyRound, adminOnly: true },
   { id: "monitoring", label: "Monitoring", icon: Activity, adminOnly: true },
   { id: "updates",    label: "Updates", icon: Megaphone, adminOnly: true },
 ];
@@ -4302,6 +4304,8 @@ export default function AccountPage({ onNavigate }: { onNavigate: (url: string) 
             )}
 
             {section === "ad-reports" && isAdmin && <AdReportsPanel C={C} />}
+
+            {section === "custom-ai" && isAdmin && <CustomAiPanel C={C} />}
 
             {section === "monitoring" && isAdmin && (
               <div style={{ maxWidth: "560px" }}>

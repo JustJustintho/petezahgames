@@ -60,13 +60,18 @@ export function sessionTotpSatisfied(req) {
   return !!req.session?.totpOk;
 }
 
+const STAFF_SESSION_MS = 12 * 60 * 60 * 1000;
+
 export async function establishFullSession(req, row) {
   const sessionUser = buildFullSessionUser(row);
+  const elevated = isElevatedRole(row.is_admin, row.email);
   await new Promise((resolve, reject) => {
     req.session.regenerate((err) => {
       if (err) return reject(err);
       req.session.user = sessionUser;
       req.session.totpOk = true;
+      if (elevated) req.session.elevatedAt = Date.now();
+      else delete req.session.elevatedAt;
       delete req.session.pending2fa;
       delete req.session.must_setup_2fa;
       req.session.save((saveErr) => (saveErr ? reject(saveErr) : resolve()));
@@ -152,7 +157,25 @@ export function enforceElevatedSession(req) {
   if (!sessionElevated) delete req.session.totpOk;
 
   if (row.totp_enabled) {
-    if (req.session.totpOk) return { ok: true };
+    if (req.session.totpOk) {
+      const started = Number(req.session.elevatedAt) || 0;
+      if (!started) {
+        req.session.elevatedAt = Date.now();
+        return { ok: true };
+      }
+      if (Date.now() - started > STAFF_SESSION_MS) {
+        delete req.session.user;
+        delete req.session.totpOk;
+        delete req.session.elevatedAt;
+        delete req.session.pending2fa;
+        return {
+          ok: false,
+          status: 401,
+          body: { error: 'Staff session expired. Sign in again.', code: 'REQUIRES_SIGNIN' },
+        };
+      }
+      return { ok: true };
+    }
     req.session.pending2fa = {
       userId: row.id,
       email: row.email,

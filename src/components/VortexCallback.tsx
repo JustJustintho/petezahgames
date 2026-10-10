@@ -1,0 +1,19 @@
+import { useEffect } from "react";
+import { Loader2 } from "lucide-react";
+
+export default function VortexCallback() {
+  useEffect(() => {
+    const q = window.location.search || "";
+    fetch(`/api/chat/finish${q}`, { credentials: "include", redirect: "manual" }).finally(() => {
+      window.location.replace(`/?m=${encodeURIComponent("petezah://chat")}`);
+    });
+  }, []);
+  return (
+    <div className="flex min-h-screen items-center justify-center" style={{ background: "#020810", color: "hsl(216 15% 68%)" }}>
+      <div className="flex items-center gap-3 text-sm">
+        <Loader2 className="animate-spin" size={16} style={{ color: "hsl(213 80% 78%)" }} />
+        Finishing Vortex sign-in
+      </div>
+    </div>
+  );
+}

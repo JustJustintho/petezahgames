@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, HashRouter, Routes, Route, useParams } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import VortexCallback from "./components/VortexCallback";
 import ProfilePage from "./components/ProfilePage";
 import SharedAiPage from "./components/SharedAiPage";
 import SvgAccessGate from "./components/SvgAccessGate";
@@ -30,6 +31,8 @@ const App = () => (
           <LegalReagreeModal />
           <ActivityCaptchaModal />
           <Routes>
+            <Route path="/api/chat/callback" element={<VortexCallback />} />
+            <Route path="/api/chat/finish" element={<VortexCallback />} />
             <Route path="/" element={<Index />} />
             <Route path="/user/:username" element={<PublicProfileRoute />} />
             <Route path="/share/ai/:token" element={<SharedAiPage />} />

@@ -13,6 +13,7 @@ function tabMark(tab: Tab) {
       [hrefs.g()]: "G",
       "petezah://ai": "AI",
       "petezah://apps": "A",
+      "petezah://chat": "C",
       [hrefs.mu()]: "M",
       [hrefs.mo()]: "MV",
       "petezah://vm": "VM",

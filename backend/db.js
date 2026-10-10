@@ -370,4 +370,45 @@ try {
   console.error('ai_conversations migration error:', e);
 }
 
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vortex_links (
+      link_key TEXT PRIMARY KEY,
+      vortex_id TEXT,
+      username TEXT,
+      avatar TEXT,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      expires_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+} catch (e) {
+  console.error('vortex_links migration error:', e);
+}
+
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_ip_grants (
+      id TEXT PRIMARY KEY,
+      ip TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      cipher TEXT NOT NULL,
+      nonce TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      hint TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_by TEXT NOT NULL,
+      updated_by TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      cancelled_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_ip_grants_ip ON ai_ip_grants(ip, active);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_ip_grants_one_active ON ai_ip_grants(ip) WHERE active = 1;
+  `);
+} catch (e) {
+  console.error('ai_ip_grants migration error:', e);
+}
+
 export default db;

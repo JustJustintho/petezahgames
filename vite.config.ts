@@ -205,6 +205,14 @@ export default defineConfig(({ mode }) => ({
         target: "http://localhost:8080",
         changeOrigin: true,
       },
+      "/api/chat": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/api/announcements": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
       "/1k123.js": {
         target: "http://localhost:8080",
         changeOrigin: true,

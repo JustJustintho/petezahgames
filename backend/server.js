@@ -41,6 +41,7 @@ import musicRouter from './routes/music.js';
 import searchSuggestRouter from './routes/search-suggest.js';
 import studyPulseRouter from './routes/study-pulse.js';
 import mochiRouter from './routes/mochi.js';
+import chatRouter from './routes/chat.js';
 import db from './db.js';
 
 import { signupHandler } from './api/signup.js';
@@ -113,6 +114,13 @@ import {
   adsShownHandler,
 } from './api/ads.js';
 import { adReportsLimiter, getAdminAdReportsHandler } from './api/ad-reports.js';
+import {
+  aiGrantsLimiter,
+  listAiGrantsHandler,
+  createAiGrantHandler,
+  updateAiGrantHandler,
+  cancelAiGrantHandler,
+} from './api/ai-grants.js';
 import {
   getMyAchievementsHandler,
   achievementHeartbeatHandler,
@@ -225,14 +233,23 @@ app.use((req, res, next) => {
   return urlencodedParser(req, res, next);
 });
 
+function sessionSecret() {
+  const secret = process.env.SESSION_SECRET || '';
+  if (process.env.NODE_ENV === 'production' && secret.length < 32) {
+    console.error('SESSION_SECRET must be at least 32 characters');
+    process.exit(1);
+  }
+  return secret || randomBytes(32).toString('hex');
+}
+
 app.use(session({
   store: new SqliteStore({ client: db }),
-  secret: process.env.SESSION_SECRET || (process.env.NODE_ENV === 'production' ? '' : randomBytes(32).toString('hex')),
+  secret: sessionSecret(),
   resave: false,
   saveUninitialized: false,
   name: 'pz.sid',
   cookie: {
-    secure: process.env.NODE_ENV === 'production' ? true : 'auto',
+    secure: 'auto',
     httpOnly: true,
     sameSite: 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -392,6 +409,7 @@ app.use('/api/music/play', musicPlayLimiter);
 app.use('/api/music/media', musicStreamLimiter);
 app.use('/api/music', musicRouter);
 app.use('/api/search', searchSuggestRouter);
+app.use('/api/chat', chatRouter);
 
 app.post('/api/signup', signupLimiter, signupHandler);
 app.post('/api/signin', signinLimiter, signinHandler);
@@ -422,6 +440,10 @@ app.post('/api/ads/shown', adsGateLimiter, adsShownHandler);
 app.get('/api/ads/vast', adsVastLimiter, adsVastHandler);
 app.get('/api/ads/vast.xml', adsVastLimiter, adsVastXmlHandler);
 app.get('/api/admin/ad-reports', adReportsLimiter, getAdminAdReportsHandler);
+app.get('/api/admin/ai-grants', aiGrantsLimiter, listAiGrantsHandler);
+app.post('/api/admin/ai-grants', aiGrantsLimiter, createAiGrantHandler);
+app.patch('/api/admin/ai-grants/:id', aiGrantsLimiter, updateAiGrantHandler);
+app.post('/api/admin/ai-grants/:id/cancel', aiGrantsLimiter, cancelAiGrantHandler);
 
 app.get('/api/settings', getSettingsHandler);
 app.put('/api/settings', localStorageLimiter, saveSettingsHandler);

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import fetch from 'node-fetch';
 import { checkCircuitBreaker, toIPv4 } from '../middleware/security.js';
 import { logAnonymousFirstPrompt } from '../api/ai-conversations.js';
+import { resolveAiKey } from '../api/ai-grants.js';
 
 const router = Router();
 
@@ -199,7 +200,13 @@ router.post('/', async (req, res) => {
       ];
   }
 
-  const isSimple = !wantsVision && prompt.length <= CACHE_MAX_PROMPT_LEN && !safeMessages;
+  const keyPick = resolveAiKey(ip);
+  if (keyPick.mode === 'broken') {
+    return res.status(503).json({ error: 'AI service unavailable' });
+  }
+  const bearer = keyPick.mode === 'custom' ? keyPick.token : process.env.GROQ_API_KEY;
+
+  const isSimple = !wantsVision && prompt.length <= CACHE_MAX_PROMPT_LEN && !safeMessages && keyPick.mode !== 'custom';
   const cacheKey = isSimple ? normalizeCacheKey(prompt) : null;
   if (cacheKey) {
     const cached = getCached(cacheKey);
@@ -227,7 +234,7 @@ router.post('/', async (req, res) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          Authorization: `Bearer ${bearer}`,
         },
         body: JSON.stringify(payload),
         signal: controller.signal,
@@ -277,10 +284,12 @@ router.post('/', async (req, res) => {
     if (err.code === 'QUEUE_FULL') return res.status(503).json({ error: 'Server busy, try again in a moment' });
     if (err.name === 'AbortError') return res.status(504).json({ error: 'Request timeout' });
     if (err.code === 'GROQ_ERROR') {
-      return res.status(502).json({
-        error: err.detail || 'AI service error',
-        detail: err.detail || err.message,
-      });
+      const detail = String(err.detail || err.message || 'AI service error')
+        .replace(/gsk_[A-Za-z0-9_-]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 240) || 'AI service error';
+      return res.status(502).json({ error: detail, detail });
     }
     return res.status(500).json({ error: 'AI service unavailable' });
   }

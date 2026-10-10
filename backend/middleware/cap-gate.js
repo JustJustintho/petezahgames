@@ -55,6 +55,9 @@ const OPEN_EXACT = new Set([
   '/api/websocket/tor',
   '/api/websocket/tor/',
   '/api/announcements/active',
+  '/api/chat/auth',
+  '/api/chat/callback',
+  '/api/chat/finish',
 ]);
 
 const OPEN_PREFIX = ['/cap/', '/api/verify-email', '/api/legal', '/api/study/', '/api/flashcards/', '/api/quiz/', '/vendor/', '/fonts/', '/fx/', '/storage/ag/', '/b/', '/f/__rivet__/'];

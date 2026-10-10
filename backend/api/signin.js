@@ -1,4 +1,5 @@
 import bcrypt from 'bcrypt';
+import { createHash } from 'crypto';
 import db from '../db.js';
 import { isOwnerEmail } from '../utils/auth-roles.js';
 import { getClientIP } from '../utils/client-ip.js';
@@ -12,6 +13,35 @@ import {
 import { maskEmail } from '../utils/elevated-auth.js';
 
 const DUMMY_HASH = '$2b$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ12';
+const FAIL_WINDOW_MS = 15 * 60 * 1000;
+const FAIL_MAX = 8;
+const signinFails = new Map();
+
+function failKey(email) {
+  return createHash('sha256').update(`signin:${email}`).digest('hex');
+}
+
+function tooManyFails(email) {
+  const row = signinFails.get(failKey(email));
+  if (!row || row.reset < Date.now()) return false;
+  return row.n >= FAIL_MAX;
+}
+
+function noteFail(email) {
+  const key = failKey(email);
+  const now = Date.now();
+  const row = signinFails.get(key);
+  if (!row || row.reset < now) {
+    if (signinFails.size > 4000) signinFails.clear();
+    signinFails.set(key, { n: 1, reset: now + FAIL_WINDOW_MS });
+    return;
+  }
+  row.n += 1;
+}
+
+function clearFails(email) {
+  signinFails.delete(failKey(email));
+}
 
 function normalizeEmail(email) {
   if (typeof email !== 'string') return '';
@@ -21,6 +51,7 @@ function normalizeEmail(email) {
 export async function signinHandler(req, res) {
   const email = normalizeEmail(req.body?.email);
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (req.body && typeof req.body === 'object') delete req.body.password;
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
   if (password.length > 256) return res.status(400).json({ error: 'Invalid email or password' });
 
@@ -36,13 +67,16 @@ export async function signinHandler(req, res) {
        FROM users WHERE lower(email) = ?`
     ).get(email);
 
-    const hashToCompare = user ? user.password_hash : DUMMY_HASH;
+    const locked = tooManyFails(email);
+    const hashToCompare = user && !locked ? user.password_hash : DUMMY_HASH;
     const passwordMatch = await bcrypt.compare(password, hashToCompare);
 
-    if (!user || !passwordMatch) {
+    if (locked || !user || !passwordMatch) {
+      noteFail(email);
       await new Promise(r => setTimeout(r, 80 + Math.floor(Math.random() * 120)));
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+    clearFails(email);
 
     if (user.banned) return res.status(403).json({ error: 'This account has been banned.' });
 

@@ -12,6 +12,7 @@ import {
   parseStoredTargetIps,
   ipInTargetList,
 } from '../utils/mentions.js';
+import { mirrorAnnouncement } from '../vortex.js';
 
 const STALE_MS = 30000;
 const MAX_CLIENTS = 4000;
@@ -186,7 +187,7 @@ export function listAnnouncementsHandler(req, res) {
   });
 }
 
-export function getActiveAnnouncementHandler(req, res) {
+export function activeAnnouncementsFor(req) {
   const uid = req.session?.user?.id || null;
   const ip = toIPv4(null, req);
   const byId = new Map();
@@ -234,6 +235,11 @@ export function getActiveAnnouncementHandler(req, res) {
     .slice(0, 12)
     .map(({ target_ips, ...rest }) => rest);
 
+  return announcements;
+}
+
+export function getActiveAnnouncementHandler(req, res) {
+  const announcements = activeAnnouncementsFor(req);
   res.json({
     announcements,
     announcement: announcements[0] || null,
@@ -284,6 +290,8 @@ export function createAnnouncementHandler(req, res) {
     refId: id,
     preview: content,
   });
+
+  if (!targetUserId && !targetIpsJson) mirrorAnnouncement(title, content);
 
   const row = db
     .prepare(
