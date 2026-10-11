@@ -41,7 +41,6 @@ if (typeof _boot !== 'function') {
   });
   self.addEventListener('fetch', function (event) {
     if (handleRivet(event)) return;
-    event.respondWith(fetch(event.request));
   });
 } else {
 var _exports = _boot();
@@ -190,7 +189,19 @@ async function handleRequest(event) {
   }
 }
 
+function leaveSignIn(event) {
+  try {
+    var url = new URL(event.request.url);
+    if (url.origin !== self.location.origin) return false;
+    var path = url.pathname;
+    return path === '/api/chat/auth' || path === '/api/chat/callback' || path === '/api/chat/finish';
+  } catch (e) {
+    return false;
+  }
+}
+
 self.addEventListener('fetch', function (event) {
+  if (leaveSignIn(event)) return;
   if (handleRivet(event)) return;
   try {
     var url = new URL(event.request.url);

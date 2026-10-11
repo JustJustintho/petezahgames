@@ -393,8 +393,27 @@ function home() {
   return '/?m=' + encodeURIComponent('petezah://chat');
 }
 
+const RETURN_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Signing in</title></head><body style="margin:0;background:#020810;color:#9aa4b2;font:14px system-ui,sans-serif;display:grid;place-items:center;min-height:100vh"><p>Finishing sign-in…</p><script>
+var q=location.search||"";
+var back="/?m="+encodeURIComponent("petezah://chat");
+try{history.replaceState(null,"","/api/chat/callback")}catch(e){}
+var timer=setTimeout(function(){location.replace(back)},12000);
+fetch("/api/chat/finish"+q,{credentials:"include",headers:{Accept:"application/json"},redirect:"manual"}).finally(function(){clearTimeout(timer);location.replace(back)});
+</script></body></html>`;
+
+function sendReturn(res) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.type('html').send(RETURN_HTML);
+}
+
+function sendDone(req, res) {
+  if (req.headers['sec-fetch-mode'] === 'navigate') return res.redirect(home());
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(204).end();
+}
+
 async function completeLogin(req, res) {
-  const back = home();
   const state = String(req.query.state || '');
   const code = String(req.query.code || '').slice(0, 512);
   const saved = readPack(req.cookies?.pz_vtx) || req.session?.vortexOauth || null;
@@ -402,14 +421,14 @@ async function completeLogin(req, res) {
   res.clearCookie('pz_vtx', { path: '/' });
   const redirectUri = saved?.redirectUri || `${callbackOrigin(req)}/api/chat/callback`;
   if (!saved || saved.exp < Date.now() || !sameSecret(state, saved.state) || req.query.error || !code) {
-    return res.redirect(back);
+    return sendDone(req, res);
   }
   try {
     const tokens = await exchangeCode(code, saved.verifier, redirectUri);
-    saveLink(ensureLinkKey(req), tokens);
+    if (tokens) saveLink(ensureLinkKey(req), tokens);
   } catch {}
-  if (req.session?.save) return req.session.save(() => res.redirect(back));
-  return res.redirect(back);
+  if (req.session?.save) return req.session.save(() => sendDone(req, res));
+  return sendDone(req, res);
 }
 
 const SPANS = new Set([10, 60, 1440, 10080]);
@@ -718,12 +737,14 @@ router.get('/auth', async (req, res) => {
     maxAge: 10 * 60 * 1000,
     path: '/',
   });
+  const nextUrl = authorizeUrl({ redirectUri, state, challenge });
   req.session.save(() => {
-    res.redirect(authorizeUrl({ redirectUri, state, challenge }));
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Vortex</title></head><body><script>location.replace(${JSON.stringify(nextUrl)})</script></body></html>`);
   });
 });
 
-router.get('/callback', completeLogin);
+router.get('/callback', (req, res) => sendReturn(res));
 router.get('/finish', completeLogin);
 
 export default router;
