@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'crypto';
 import { Router } from 'express';
 import { activeAnnouncementsFor } from '../api/admin-presence.js';
+import { noteError } from '../utils/error-ring.js';
 import {
   attachCard,
   attachGroups,
@@ -421,12 +422,18 @@ async function completeLogin(req, res) {
   res.clearCookie('pz_vtx', { path: '/' });
   const redirectUri = saved?.redirectUri || `${callbackOrigin(req)}/api/chat/callback`;
   if (!saved || saved.exp < Date.now() || !sameSecret(state, saved.state) || req.query.error || !code) {
+    const why = !saved ? 'missing sign-in cookie' : saved.exp < Date.now() ? 'sign-in cookie expired' : req.query.error ? 'provider returned an error' : 'sign-in state did not match';
+    noteError(401, '/api/chat/finish', why);
     return sendDone(req, res);
   }
   try {
     const tokens = await exchangeCode(code, saved.verifier, redirectUri);
     if (tokens) saveLink(ensureLinkKey(req), tokens);
-  } catch {}
+  } catch (err) {
+    const status = Number(err?.status) || 502;
+    const msg = err instanceof Error && err.message && err.message !== 'chat' ? err.message : 'sign-in failed';
+    noteError(status, '/api/chat/finish', msg);
+  }
   if (req.session?.save) return req.session.save(() => sendDone(req, res));
   return sendDone(req, res);
 }

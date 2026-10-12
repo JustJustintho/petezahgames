@@ -60,7 +60,7 @@ const SITE_PRESETS = [
   { id: "petezah",   label: "PeteZah",           favicon: "/logo.png" },
 ];
 
-type Section = "profile" | "proxy" | "get-links" | "achievements" | "appearance" | "cloaking" | "behavior" | "shortcuts" | "data" | "mentions" | "admin" | "users" | "live" | "firefox-vm" | "game-stats" | "link-stats" | "ad-reports" | "custom-ai" | "monitoring" | "updates" | "ai-prompts";
+type Section = "profile" | "proxy" | "get-links" | "achievements" | "appearance" | "cloaking" | "behavior" | "shortcuts" | "data" | "mentions" | "admin" | "users" | "live" | "firefox-vm" | "game-stats" | "link-stats" | "ad-reports" | "custom-ai" | "monitoring" | "errors" | "updates" | "ai-prompts";
 
 function applySettingsNow(s: Record<string, string>) {
   if (s.theme) {
@@ -374,6 +374,7 @@ const NAV: { id: Section; label: string; icon: any; adminOnly?: boolean }[] = [
   { id: "ad-reports", label: "Ad reports", icon: TrendingUp, adminOnly: true },
   { id: "custom-ai", label: "Custom AI", icon: KeyRound, adminOnly: true },
   { id: "monitoring", label: "Monitoring", icon: Activity, adminOnly: true },
+  { id: "errors", label: "Errors", icon: AlertCircle, adminOnly: true },
   { id: "updates",    label: "Updates", icon: Megaphone, adminOnly: true },
 ];
 
@@ -541,6 +542,8 @@ export default function AccountPage({ onNavigate }: { onNavigate: (url: string) 
     sampled?: number;
   } | null>(null);
   const [routeMetricsLoading, setRouteMetricsLoading] = useState(false);
+  const [errorLog, setErrorLog] = useState<{ total: number; rows: { t: number; n: number; code: number; path: string; msg: string }[] } | null>(null);
+  const [errorLogLoading, setErrorLogLoading] = useState(false);
   const [annTitle, setAnnTitle] = useState("");
   const [annContent, setAnnContent] = useState("");
   const [annTarget, setAnnTarget] = useState("");
@@ -1067,6 +1070,31 @@ export default function AccountPage({ onNavigate }: { onNavigate: (url: string) 
     };
     load();
     const iv = setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [section, user]);
+
+  useEffect(() => {
+    if (section !== "errors" || !(user && ((user.is_admin ?? 0) >= 1 || user.is_owner))) return;
+    let cancelled = false;
+    const load = () => {
+      setErrorLogLoading(true);
+      fetch("/api/admin/errors", { credentials: "include" })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!cancelled && d?.ok) setErrorLog({ total: Number(d.total) || 0, rows: Array.isArray(d.rows) ? d.rows : [] });
+        })
+        .catch(() => {
+          if (!cancelled) setErrorLog(null);
+        })
+        .finally(() => {
+          if (!cancelled) setErrorLogLoading(false);
+        });
+    };
+    load();
+    const iv = setInterval(load, 20000);
     return () => {
       cancelled = true;
       clearInterval(iv);
@@ -4393,6 +4421,51 @@ export default function AccountPage({ onNavigate }: { onNavigate: (url: string) 
                       Uptime {Math.floor((routeMetrics.uptimeSec || 0) / 3600)}h · samples {routeMetrics.sampled ?? 0}
                     </p>
                   </>
+                )}
+              </div>
+            )}
+
+            {section === "errors" && isAdmin && (
+              <div data-no-obfuscate style={{ maxWidth: "560px" }}>
+                <h2 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: "0 0 3px", display: "flex", alignItems: "center", gap: 8 }}>
+                  <AlertCircle size={14} style={{ color: C.accent }} />
+                  Errors
+                </h2>
+                <p style={{ fontSize: 11, color: C.textSub, margin: "0 0 16px" }}>
+                  Last 24 server errors since this process started. Repeats are counted, not stored again. Refreshes every 20s.
+                </p>
+                {errorLogLoading && !errorLog ? (
+                  <div style={{ display: "flex", justifyContent: "center", padding: 32 }}>
+                    <Loader2 size={18} className="animate-spin" style={{ color: C.accent }} />
+                  </div>
+                ) : !errorLog ? (
+                  <p style={{ fontSize: 12, color: C.textMuted }}>Could not load errors</p>
+                ) : !errorLog.rows.length ? (
+                  <p style={{ fontSize: 12, color: C.textMuted }}>No errors since this process started</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {errorLog.rows.map((row, i) => (
+                      <div
+                        key={`${row.t}-${i}`}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 9,
+                          background: C.surface,
+                          border: `1px solid ${C.border}`,
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                          <span style={{ fontSize: 11, fontWeight: 650, color: C.text }}>
+                            {row.code ? row.code : "log"}{row.path ? ` · ${row.path}` : ""}
+                          </span>
+                          <span style={{ fontSize: 10, color: C.textMuted, flexShrink: 0 }}>
+                            {new Date(row.t).toLocaleTimeString()}{row.n > 1 ? ` · ×${row.n}` : ""}
+                          </span>
+                        </div>
+                        <p style={{ margin: 0, fontSize: 12, color: C.textSub, wordBreak: "break-word" }}>{row.msg}</p>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             )}

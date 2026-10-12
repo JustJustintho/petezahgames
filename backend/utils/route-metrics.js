@@ -1,3 +1,5 @@
+import { noteHttpStatus } from './error-ring.js';
+
 const MAX_ROUTES = 48;
 const keys = new Array(MAX_ROUTES);
 const counts = new Uint32Array(MAX_ROUTES);
@@ -71,6 +73,7 @@ export function createRouteTimingMiddleware() {
     const t0 = process.hrtime.bigint();
     res.on('finish', () => {
       recordRouteTiming(p, Number(process.hrtime.bigint() - t0) / 1e6);
+      if (res.statusCode >= 500) noteHttpStatus(res.statusCode, req.method, p);
     });
     next();
   };

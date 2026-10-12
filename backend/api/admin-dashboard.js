@@ -5,6 +5,7 @@ import { getShield } from '../utils/shield-ref.js';
 import { systemState } from '../middleware/security.js';
 import { getApiLatencyStats, getMemoryStats, sampleCpuPercent, recordApiLatency } from '../utils/runtime-metrics.js';
 import { getRouteTimingStats } from '../utils/route-metrics.js';
+import { listErrors } from '../utils/error-ring.js';
 import { getUsageCounts } from '../utils/usage-daily.js';
 
 let getXDPBlockCount = () => 0;
@@ -197,6 +198,12 @@ export async function getAdminOverviewHandler(req, res) {
     console.error('admin overview error:', err);
     return res.status(500).json({ error: 'Failed to load overview' });
   }
+}
+
+export function getAdminErrorsHandler(req, res) {
+  const admin = requireAdminSession(req, res);
+  if (!admin) return;
+  return res.json({ ok: true, ...listErrors() });
 }
 
 export async function getAdminRouteMetricsHandler(req, res) {

@@ -21,6 +21,7 @@ import { applySeoToHtml, isPeteZahHomeHost } from './utils/seo-meta.js';
 import fs, { existsSync } from 'node:fs';
 
 import { createRouteTimingMiddleware } from './utils/route-metrics.js';
+import { installErrorHooks } from './utils/error-ring.js';
 import { createCorsConfig, createSecurityHeaders, createUploadGuard, wrapCrossSiteCookies } from './middleware/http-security.js';
 import { attachSvgSessionSid, injectSvgSessionCookie } from './utils/svg-session.js';
 import { ddosShield } from './security/ddos-shield.js';
@@ -32,6 +33,7 @@ import {
   setAttackModeHandler,
   setKillSwitchHandler,
   getAdminRouteMetricsHandler,
+  getAdminErrorsHandler,
 } from './api/admin-dashboard.js';
 import { authLimiter, signinLimiter, createApiLimiter, createAiLimiter, signupLimiter, localStorageLimiter, pfpLimiter, securityActionLimiter, adminOverviewLimiter, aiConversationsLimiter, musicBrowseLimiter, musicSearchLimiter, musicPlayLimiter, musicStreamLimiter } from './middleware/rate-limit.js';
 import challengeRouter from './routes/challenge.js';
@@ -159,6 +161,7 @@ const { createBareServer } = bareServerPkg;
 const SqliteStore = BetterSqlite3Session(session);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+installErrorHooks();
 assertProductionSecrets();
 getTokenSecret();
 
@@ -482,6 +485,7 @@ app.get('/api/admin/users/:id', getAdminUserHandler);
 app.get('/api/admin/badge-rarity', getBadgeRarityLeaderboardHandler);
 app.get('/api/admin/overview', adminOverviewLimiter, getAdminOverviewHandler);
 app.get('/api/admin/route-metrics', adminOverviewLimiter, getAdminRouteMetricsHandler);
+app.get('/api/admin/errors', adminOverviewLimiter, getAdminErrorsHandler);
 app.post('/api/admin/security/attack-mode', securityActionLimiter, setAttackModeHandler);
 app.post('/api/admin/security/kill-switch', securityActionLimiter, setKillSwitchHandler);
 app.get('/api/admin/live-sites', getLiveSitesHandler);
