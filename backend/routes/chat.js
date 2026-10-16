@@ -50,6 +50,7 @@ import {
   setMemberRole,
   mentionUsers,
   timeoutMember,
+  browserPass,
   viewerState,
   vortexClientId,
   vortexJoinEnabled,
@@ -61,6 +62,7 @@ const ID = /^[a-f0-9]{24}$/;
 const sentAt = new Map();
 const seats = new Map();
 const typers = new Map();
+const passAt = new Map();
 const SEAT_TTL = 35000;
 
 function markSeat(channelId, viewer) {
@@ -200,11 +202,42 @@ async function room(req) {
   return { row: view ? row : null, box, channels, view };
 }
 
+async function guildOnly() {
+  try {
+    return await appGuild();
+  } catch {
+    return null;
+  }
+}
+
+function seatFromRow(row) {
+  if (!row) return null;
+  return {
+    id: String(row.vortex_id || ''),
+    username: String(row.username || 'Member').slice(0, 64),
+    avatar: String(row.avatar || ''),
+    color: '',
+  };
+}
+
+function allowPass(key) {
+  const now = Date.now();
+  const last = passAt.get(key) || 0;
+  if (now - last < 4000) return false;
+  if (passAt.has(key)) passAt.delete(key);
+  passAt.set(key, now);
+  while (passAt.size > 400) {
+    const first = passAt.keys().next().value;
+    passAt.delete(first);
+  }
+  return true;
+}
+
 router.get('/boot', async (req, res) => {
   quiet(res);
   const announcements = cleanAnnouncements(req);
   try {
-    const { channels, view, box } = await room(req);
+    const { channels, view, box, row } = await room(req);
     const channelId = pickChannel(channels, '');
     let messages = [];
     let hasMore = false;
@@ -216,6 +249,12 @@ router.get('/boot', async (req, res) => {
       hasMore = feed.hasMore;
       rev = feed.rev;
       emotes = await emoteMap();
+    }
+    let wire = null;
+    if (row) {
+      try {
+        wire = await browserPass(row);
+      } catch {}
     }
     res.json({
       live: !!box,
@@ -233,6 +272,7 @@ router.get('/boot', async (req, res) => {
       roles: view ? await guildRoles().catch(() => []) : [],
       rules: view?.rules || null,
       announcements,
+      wire,
     });
   } catch (err) {
     res.json({
@@ -248,17 +288,33 @@ router.get('/boot', async (req, res) => {
       viewer: null,
       rules: null,
       announcements,
+      wire: null,
       error: err instanceof ChatError && err.status === 429 ? 'Slow mode is on.' : 'Chat is unavailable right now.',
     });
+  }
+});
+
+router.get('/pass', async (req, res) => {
+  quiet(res);
+  try {
+    const row = readLink(existingLinkKey(req));
+    if (!row) return res.status(401).json({ error: 'Sign in with Vortex again.' });
+    if (!allowPass(row.link_key)) return res.status(429).json({ error: 'Slow mode is on. Try again in a moment.' });
+    const wire = await browserPass(row);
+    if (!wire) return res.status(503).json({ error: 'Chat is unavailable right now.' });
+    res.json(wire);
+  } catch (err) {
+    fail(res, err);
   }
 });
 
 router.get('/feed', async (req, res) => {
   quiet(res);
   try {
-    const { channels, box } = await room(req);
-    const channelId = pickChannel(channels, String(req.query.channel || ''));
-    if (!channelId || !box || !knownChannel(box, channelId)) {
+    const wanted = String(req.query.channel || '');
+    const box = await guildOnly();
+    const channelId = ID.test(wanted) && box && knownChannel(box, wanted) ? wanted : '';
+    if (!channelId || !box) {
       return res.json({ live: !!box, channelId: '', messages: [], hasMore: false, rev: '0' });
     }
     const feed = await latestMessages(channelId);
@@ -281,7 +337,7 @@ router.get('/feed', async (req, res) => {
 router.get('/history', async (req, res) => {
   quiet(res);
   try {
-    const { box } = await room(req);
+    const box = await guildOnly();
     const channelId = String(req.query.channel || '');
     const before = String(req.query.before || '');
     if (!ID.test(channelId) || !ID.test(before) || !box || !knownChannel(box, channelId)) {
@@ -304,10 +360,13 @@ router.post('/send', async (req, res) => {
     const replyTo = typeof req.body?.replyTo === 'string' ? req.body.replyTo : '';
     if (!ID.test(channelId) || !content) return res.status(400).json({ error: 'That message could not be sent.' });
     if (replyTo && !ID.test(replyTo)) return res.status(400).json({ error: 'That message could not be sent.' });
-    const { channels, box } = await room(req);
+    const { channels, box, view } = await room(req);
     const channel = channels.find((c) => c.id === channelId);
     if (!channel || !box || !knownChannel(box, channelId) || !channel.canSend) {
       return res.status(403).json({ error: 'You cannot do that in this room.' });
+    }
+    if (view?.rules && view.rules.accepted === false) {
+      return res.status(403).json({ error: 'Accept the room rules before chatting.', needRules: true });
     }
     if (!allowSend(row.link_key)) return res.status(429).json({ error: 'Slow mode is on. Try again in a moment.' });
     const sent = await sendAs(row, channelId, content, replyTo);
@@ -633,9 +692,11 @@ router.post('/typing', async (req, res) => {
   try {
     const channelId = String(req.body?.channelId || '');
     if (!ID.test(channelId)) return res.json({ ok: false });
-    const { box, view } = await room(req);
-    if (!box || !view?.viewer || !knownChannel(box, channelId)) return res.json({ ok: false });
-    markTyping(channelId, view.viewer);
+    const row = readLink(existingLinkKey(req));
+    const box = await guildOnly();
+    const seat = seatFromRow(row);
+    if (!box || !seat?.id || !knownChannel(box, channelId)) return res.json({ ok: false });
+    markTyping(channelId, seat);
     res.json({ ok: true });
   } catch {
     res.json({ ok: false });
@@ -681,12 +742,13 @@ router.get('/presence', async (req, res) => {
   quiet(res);
   try {
     const channelId = String(req.query.channel || '');
-    if (!/^[a-f0-9]{24}$/.test(channelId)) return res.json({ count: 0, groups: [] });
-    const { box, view } = await room(req);
+    if (!ID.test(channelId)) return res.json({ count: 0, groups: [] });
+    const box = await guildOnly();
     if (!box || !knownChannel(box, channelId)) return res.json({ count: 0, groups: [] });
-    if (view?.viewer) markSeat(channelId, view.viewer);
+    const seat = seatFromRow(readLink(existingLinkKey(req)));
+    if (seat?.id) markSeat(channelId, seat);
     const live = mergeHere(await channelPresence(channelId), channelId);
-    live.typing = typingNames(channelId, view?.viewer?.id || '');
+    live.typing = typingNames(channelId, seat?.id || '');
     res.json(live);
   } catch {
     res.json({ count: 0, groups: [] });

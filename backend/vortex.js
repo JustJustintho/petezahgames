@@ -3,10 +3,11 @@ import db from './db.js';
 
 export const VORTEX_ORIGIN = 'https://backend.hutianhuilixiang.cyou';
 
-const MSG_TTL = 3000;
+const MSG_TTL = 5000;
 const GUILD_TTL = 60000;
 const EMOTE_TTL = 600000;
 const PERM_TTL = 60000;
+const PRESENCE_TTL = 12000;
 
 class ChatError extends Error {
   constructor(status) {
@@ -386,7 +387,7 @@ export async function latestMessages(channelId) {
     job = pullMessages(channelId)
       .then((pulled) => {
         const box = { at: Date.now(), ...pulled, rev: revOf(pulled.messages) };
-        remember(msgCache, channelId, box, 3);
+        remember(msgCache, channelId, box, 6);
         return box;
       })
       .finally(() => {
@@ -403,6 +404,7 @@ export async function olderMessages(channelId, before) {
 }
 
 const presenceCache = new Map();
+const presenceJobs = new Map();
 
 function hexColor(raw) {
   const hit = String(raw || '').match(/#[0-9a-fA-F]{6}/);
@@ -411,26 +413,36 @@ function hexColor(raw) {
 
 export async function channelPresence(channelId) {
   const hit = presenceCache.get(channelId);
-  if (hit && Date.now() - hit.at < 8000) return hit.data;
-  const data = await appFetch('GET', `/guild/online?channelId=${encodeURIComponent(channelId)}`);
-  const groups = (Array.isArray(data?.groups) ? data.groups : []).slice(0, 10).map((group) => ({
-    role: group?.role
-      ? {
-          name: String(group.role.name || '').slice(0, 32),
-          color: hexColor(group.role.color),
-        }
-      : null,
-    members: (Array.isArray(group?.members) ? group.members : []).slice(0, 40).map((member) => ({
-      id: String(member?.id || ''),
-      username: String(member?.username || 'Unknown').slice(0, 64),
-      avatar: asset(member?.avatar || ''),
-      color: hexColor(member?.color),
-      status: String(member?.status || '').slice(0, 16),
-    })),
-  }));
-  const shaped = { count: Number(data?.count) || 0, groups };
-  remember(presenceCache, channelId, { at: Date.now(), data: shaped }, 4);
-  return shaped;
+  if (hit && Date.now() - hit.at < PRESENCE_TTL) return hit.data;
+  let job = presenceJobs.get(channelId);
+  if (!job) {
+    job = appFetch('GET', `/guild/online?channelId=${encodeURIComponent(channelId)}`)
+      .then((data) => {
+        const groups = (Array.isArray(data?.groups) ? data.groups : []).slice(0, 10).map((group) => ({
+          role: group?.role
+            ? {
+                name: String(group.role.name || '').slice(0, 32),
+                color: hexColor(group.role.color),
+              }
+            : null,
+          members: (Array.isArray(group?.members) ? group.members : []).slice(0, 40).map((member) => ({
+            id: String(member?.id || ''),
+            username: String(member?.username || 'Unknown').slice(0, 64),
+            avatar: asset(member?.avatar || ''),
+            color: hexColor(member?.color),
+            status: String(member?.status || '').slice(0, 16),
+          })),
+        }));
+        const shaped = { count: Number(data?.count) || 0, groups };
+        remember(presenceCache, channelId, { at: Date.now(), data: shaped }, 6);
+        return shaped;
+      })
+      .finally(() => {
+        presenceJobs.delete(channelId);
+      });
+    presenceJobs.set(channelId, job);
+  }
+  return job;
 }
 
 export function callbackOrigin(req) {
@@ -861,6 +873,19 @@ export async function deleteAs(row, channelId, messageId) {
 export async function acceptRules(row) {
   await userFetch(row, 'POST', '/guild/rules/accept');
   permCache.delete(row.link_key);
+}
+
+export async function browserPass(row) {
+  const id = activeClientId();
+  if (!id || !row) return null;
+  const token = await accessFor(row);
+  const fresh = loadLinkStmt.get(row.link_key);
+  if (!token || !fresh) return null;
+  return {
+    clientId: id,
+    accessToken: token,
+    expiresAt: Number(fresh.expires_at) || Date.now() + 3600_000,
+  };
 }
 
 export function publicOrigin() {

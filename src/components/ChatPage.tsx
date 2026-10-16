@@ -1,5 +1,18 @@
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { ChevronDown, Crown, Flag, Hash, Loader2, LogOut, Pencil, Plus, Reply, Send, Shield, Smile, Trash2, Users, VolumeX, X } from "lucide-react";
+import {
+  clearWire,
+  holdWire,
+  wireAcceptRules,
+  wireBootBits,
+  wireDelete,
+  wireEdit,
+  wireFeed,
+  wireHistory,
+  wirePresence,
+  wireSend,
+  type RoomWire,
+} from "@/lib/roomWire";
 
 type Channel = {
   id: string;
@@ -67,6 +80,7 @@ type Boot = {
   standing: Standing | null;
   rules: { accepted: boolean; items: Rule[] } | null;
   announcements: Announcement[];
+  wire?: RoomWire | null;
   error?: string;
 };
 type ChannelDraft = {
@@ -462,26 +476,52 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
   const channelRef = useRef("");
   const liveRef = useRef(false);
   const typedAt = useRef(0);
+  const gapRef = useRef(5000);
+  const feedBusy = useRef(false);
 
   liveRef.current = !!boot?.viewer;
 
   useEffect(() => {
     let stop = false;
+    const apply = (data: Boot) => {
+      if (stop || !data) return;
+      if (data.wire) holdWire(data.wire);
+      setBoot(data);
+      setChannelId(data.channelId || "");
+      channelRef.current = data.channelId || "";
+      setMessages(Array.isArray(data.messages) ? data.messages : []);
+      setHasMore(!!data.hasMore);
+      setAnnouncements(Array.isArray(data.announcements) ? data.announcements : []);
+      revRef.current = data.rev || "0";
+      setNote(data.error || "");
+      stickRef.current = true;
+    };
+    const viaWire = async () => {
+      try {
+        const pass = await fetch("/api/chat/pass", { credentials: "include" });
+        if (pass.ok) holdWire(await pass.json());
+        const alt = await wireBootBits();
+        if (alt?.viewer) {
+          apply({ ...alt, join: true, announcements: [] });
+          return true;
+        }
+      } catch {}
+      return false;
+    };
     fetch("/api/chat/boot", { credentials: "include" })
-      .then((r) => r.json())
-      .then((data: Boot) => {
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(async (data: Boot) => {
         if (stop || !data) return;
-        setBoot(data);
-        setChannelId(data.channelId || "");
-        channelRef.current = data.channelId || "";
-        setMessages(Array.isArray(data.messages) ? data.messages : []);
-        setHasMore(!!data.hasMore);
-        setAnnouncements(Array.isArray(data.announcements) ? data.announcements : []);
-        revRef.current = data.rev || "0";
-        setNote(data.error || "");
-        stickRef.current = true;
+        if (data.wire) holdWire(data.wire);
+        if ((!data.live || data.error) && (data.wire || data.viewer)) {
+          const rescued = await viaWire();
+          if (rescued) return;
+        }
+        apply(data);
       })
-      .catch(() => {
+      .catch(async () => {
+        if (stop) return;
+        if (await viaWire()) return;
         if (!stop) setNote("Chat is unavailable right now.");
       });
     return () => {
@@ -551,32 +591,82 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
   useEffect(() => {
     if (!channelId || !boot?.viewer) return;
     let stop = false;
+    let timer = 0;
+    gapRef.current = 5000;
     const pull = async () => {
       const box = listRef.current;
-      if (stop || document.hidden || !liveRef.current || !channelRef.current || !box) return;
+      const again = () => {
+        if (!stop) timer = window.setTimeout(pull, gapRef.current);
+      };
+      if (stop || document.hidden || !liveRef.current || !channelRef.current || !box || feedBusy.current) {
+        again();
+        return;
+      }
       let node: HTMLElement | null = box;
       while (node) {
-        if (getComputedStyle(node).display === "none") return;
+        if (getComputedStyle(node).display === "none") {
+          again();
+          return;
+        }
         node = node.parentElement;
       }
+      feedBusy.current = true;
       try {
         const q = new URLSearchParams({ channel: channelRef.current, v: revRef.current });
         const res = await fetch(`/api/chat/feed?${q}`, { credentials: "include" });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (stop || data.channelId !== channelRef.current || data.unchanged) return;
-        if (Array.isArray(data.messages)) {
-          revRef.current = data.rev || revRef.current;
-          setHasMore(!!data.hasMore);
-          setMessages(data.messages);
-          if (!stickRef.current) setFresh(true);
+        if (res.ok) {
+          const data = await res.json();
+          if (!stop && data.channelId === channelRef.current) {
+            if (data.unchanged) {
+              gapRef.current = Math.min(12000, gapRef.current + 1000);
+            } else if (Array.isArray(data.messages)) {
+              gapRef.current = 5000;
+              revRef.current = data.rev || revRef.current;
+              setHasMore(!!data.hasMore);
+              setMessages(data.messages);
+              if (!stickRef.current) setFresh(true);
+            }
+          }
+        } else {
+          const alt = await wireFeed(channelRef.current, revRef.current);
+          if (!stop && alt) {
+            if (alt.unchanged) {
+              gapRef.current = Math.min(12000, gapRef.current + 1000);
+            } else {
+              gapRef.current = 5000;
+              revRef.current = alt.rev;
+              setHasMore(alt.hasMore);
+              setMessages(alt.messages);
+              if (!stickRef.current) setFresh(true);
+            }
+          } else {
+            gapRef.current = Math.min(14000, gapRef.current + 2000);
+          }
         }
-      } catch {}
+      } catch {
+        try {
+          const alt = await wireFeed(channelRef.current, revRef.current);
+          if (!stop && alt && !alt.unchanged) {
+            gapRef.current = 5000;
+            revRef.current = alt.rev;
+            setHasMore(alt.hasMore);
+            setMessages(alt.messages);
+            if (!stickRef.current) setFresh(true);
+          } else {
+            gapRef.current = Math.min(14000, gapRef.current + 2000);
+          }
+        } catch {
+          gapRef.current = Math.min(14000, gapRef.current + 2000);
+        }
+      } finally {
+        feedBusy.current = false;
+        again();
+      }
     };
-    const timer = window.setInterval(pull, 4000);
+    pull();
     return () => {
       stop = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
   }, [channelId, boot?.viewer?.id]);
 
@@ -614,20 +704,27 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
   useEffect(() => {
     if (!channelId || !boot?.viewer) return;
     let stop = false;
-    const pull = () => {
+    const pull = async () => {
       if (stop || document.hidden) return;
-      fetch(`/api/chat/presence?${new URLSearchParams({ channel: channelId })}`, { credentials: "include" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
+      try {
+        const res = await fetch(`/api/chat/presence?${new URLSearchParams({ channel: channelId })}`, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
           if (stop || !data) return;
           setGroups(Array.isArray(data.groups) ? data.groups : []);
           setOnlineCount(Number(data.count) || 0);
           setTyping(Array.isArray(data.typing) ? data.typing : []);
-        })
-        .catch(() => {});
+          return;
+        }
+      } catch {}
+      const alt = await wirePresence(channelId);
+      if (stop || !alt) return;
+      setGroups(Array.isArray(alt.groups) ? alt.groups : []);
+      setOnlineCount(Number(alt.count) || 0);
+      setTyping(Array.isArray(alt.typing) ? alt.typing : []);
     };
     pull();
-    const timer = window.setInterval(pull, 12000);
+    const timer = window.setInterval(pull, 15000);
     return () => {
       stop = true;
       window.clearInterval(timer);
@@ -687,9 +784,13 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
     setGroups([]);
     setFresh(false);
     fetch(`/api/chat/feed?${new URLSearchParams({ channel: id })}`, { credentials: "include" })
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (r.ok) return r.json();
+        const alt = await wireFeed(id, "");
+        return alt ? { channelId: id, rev: alt.rev, hasMore: alt.hasMore, messages: alt.messages } : null;
+      })
       .then((data) => {
-        if (data.channelId !== id) return;
+        if (!data || data.channelId !== id) return;
         revRef.current = data.rev || "0";
         setHasMore(!!data.hasMore);
         setMessages(Array.isArray(data.messages) ? data.messages : []);
@@ -702,11 +803,30 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
     const first = messages[0];
     if (!box || !first || !channelId) return;
     const prev = box.scrollHeight;
-    const res = await fetch(`/api/chat/history?${new URLSearchParams({ channel: channelId, before: first.id })}`, { credentials: "include" });
-    if (!res.ok) return;
-    const data = await res.json();
-    const page: Note[] = Array.isArray(data.messages) ? data.messages : [];
-    setHasMore(!!data.hasMore);
+    let page: Note[] = [];
+    let more = false;
+    try {
+      const res = await fetch(`/api/chat/history?${new URLSearchParams({ channel: channelId, before: first.id })}`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        page = Array.isArray(data.messages) ? data.messages : [];
+        more = !!data.hasMore;
+      } else {
+        const alt = await wireHistory(channelId, first.id);
+        if (alt) {
+          page = alt.messages;
+          more = alt.hasMore;
+        }
+      }
+    } catch {
+      const alt = await wireHistory(channelId, first.id);
+      if (alt) {
+        page = alt.messages;
+        more = alt.hasMore;
+      }
+    }
+    if (!page.length && !more) return;
+    setHasMore(more);
     setMessages((cur) => {
       const ids = new Set(cur.map((m) => m.id));
       return [...page.filter((m) => !ids.has(m.id)), ...cur];
@@ -738,16 +858,42 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
     try {
       const path = editing ? "/api/chat/edit" : "/api/chat/send";
       const body = editing ? { channelId, messageId: editing.id, content } : { channelId, content, replyTo: reply?.id || "" };
-      const res = await fetch(path, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setNote(data.error || "That message could not be sent.");
-        return;
+      let data: any = null;
+      let ok = false;
+      try {
+        const res = await fetch(path, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        data = await res.json().catch(() => ({}));
+        ok = res.ok;
+        if (!ok && data?.needRules) {
+          setRulesOpen(true);
+          setNote(data.error || "Accept the room rules before chatting.");
+          return;
+        }
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        if (editing) {
+          const msg = await wireEdit(channelId, editing.id, content);
+          if (!msg) {
+            setNote(data?.error || "That message could not be sent.");
+            return;
+          }
+          data = { message: msg };
+        } else {
+          const sent = await wireSend(channelId, content, reply?.id || "");
+          if (!sent.ok) {
+            if (sent.needRules) setRulesOpen(true);
+            setNote(sent.error || "That message could not be sent.");
+            return;
+          }
+          data = sent;
+        }
       }
       setDraft("");
       setReply(null);
@@ -764,6 +910,9 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
       if (!editing && data.message?.id) {
         setMessages((cur) => (cur.some((m) => m.id === data.message.id) ? cur : [...cur, data.message]));
       }
+      if (editing && data.message?.id) {
+        setMessages((cur) => cur.map((m) => (m.id === data.message.id ? data.message : m)));
+      }
       revRef.current = "";
     } catch {
       setNote("Chat is unavailable right now.");
@@ -773,16 +922,27 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
   };
 
   const remove = async (msg: Note) => {
-    const res = await fetch("/api/chat/delete", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channelId, messageId: msg.id }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setNote(data.error || "You cannot do that in this room.");
-      return;
+    try {
+      const res = await fetch("/api/chat/delete", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelId, messageId: msg.id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const alt = await wireDelete(channelId, msg.id);
+        if (!alt) {
+          setNote(data.error || "You cannot do that in this room.");
+          return;
+        }
+      }
+    } catch {
+      const alt = await wireDelete(channelId, msg.id);
+      if (!alt) {
+        setNote("You cannot do that in this room.");
+        return;
+      }
     }
     setMessages((cur) => cur.filter((m) => m.id !== msg.id));
     revRef.current = "";
@@ -791,8 +951,18 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
   const agree = async () => {
     setBusy(true);
     try {
-      const res = await fetch("/api/chat/rules", { method: "POST", credentials: "include" });
-      if (!res.ok) return;
+      let ok = false;
+      try {
+        const res = await fetch("/api/chat/rules", { method: "POST", credentials: "include" });
+        ok = res.ok;
+      } catch {
+        ok = false;
+      }
+      if (!ok) ok = await wireAcceptRules();
+      if (!ok) {
+        setNote("Could not accept the rules right now.");
+        return;
+      }
       setBoot((cur) => (cur?.rules ? { ...cur, rules: { ...cur.rules, accepted: true } } : cur));
       setRulesOpen(false);
     } finally {
@@ -802,6 +972,7 @@ export default function ChatPage({ onNavigate }: { onNavigate: (url: string) => 
 
   const leave = async () => {
     await fetch("/api/chat/logout", { method: "POST", credentials: "include" });
+    clearWire();
     setBoot((cur) => (cur ? { ...cur, viewer: null, rules: null, powers: null } : cur));
     setGroups([]);
     setMenuOpen(false);
